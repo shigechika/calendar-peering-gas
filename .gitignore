@@ -1,0 +1,10 @@
+# .gitignore
+
+# --- 必須: セキュリティ除外 ---
+.clasprc.json
+.clasp.json
+
+# --- その他 ---
+node_modules/
+.DS_Store
+Thumbs.db
