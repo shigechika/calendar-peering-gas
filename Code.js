@@ -66,7 +66,8 @@ function loadConfig() {
     MASK_TITLE:  props.MASK_TITLE || '休暇',
     
     SYNC_DAYS:   parseInt(props.SYNC_DAYS || '30', 10),
-    WEEKEND_DAYS: (props.WEEKEND_DAYS || '0,6').split(',').map(num => parseInt(num.trim(), 10))
+    WEEKEND_DAYS: (props.WEEKEND_DAYS || '0,6').split(',').map(num => parseInt(num.trim(), 10)),
+    HOLIDAY_IGNORE_LIST: (props.HOLIDAY_IGNORE_LIST || '節分,バレンタイン,雛祭り,母の日,父の日,七夕,ハロウィン,クリスマス').split(',')
   };
 }
 
@@ -193,19 +194,35 @@ function createTargetEvent(cal, sEvent, title, originId, updatedStr, sourceCalId
  * 休日・週末判定
  */
 function checkHolidayOrWeekend(date) {
+  // 1. 週末チェック (CONFIGから取得済み)
   const day = date.getDay(); 
   if (CONFIG.WEEKEND_DAYS.includes(day)) {
     return true;
   }
   
-  // 【修正1】グローバル変数 HOLIDAY_CAL を使用
+  // 2. 祝日カレンダーチェック
   if (!HOLIDAY_CAL) {
     // キャッシュしてAPIコール回数を節約
     HOLIDAY_CAL = CalendarApp.getCalendarById('ja.japanese#holiday@group.v.calendar.google.com');
   }
   if (!HOLIDAY_CAL) return false;
 
-  return HOLIDAY_CAL.getEventsForDay(date).length > 0;
+  const events = HOLIDAY_CAL.getEventsForDay(date);
+  
+  // イベントがなければ平日
+  if (events.length === 0) return false;
+
+  // --- 除外ロジック (Issue #1 対応) ---
+  // ここに日本の祝日カレンダーに含まれるが「休日ではない」イベントを定義
+  const ignoreList = CONFIG.HOLIDAY_IGNORE_LIST;
+
+  // 「除外リストに含まれるキーワード」を持たないイベントが1つでもあれば、真の休日とみなす
+  const isPublicHoliday = events.some(e => {
+    const title = e.getTitle();
+    return !ignoreList.some(ignoreWord => title.includes(ignoreWord));
+  });
+
+  return isPublicHoliday;
 }
 
 /**
@@ -272,6 +289,10 @@ function setupProperties() {
   console.log("プロパティの枠を作成しました。");
 }
 
+/**
+ * デバッグ用：WORKカレンダーとHOMEカレンダーにアクセスできるかチェック
+ */
+  
 function testAccess() {
   const props = PropertiesService.getScriptProperties().getProperties();
   const workId = props.WORK_CALENDAR_ID;
