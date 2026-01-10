@@ -2,6 +2,7 @@
 let CONFIG = {};
 let LOG_BUFFER = []; // Discord通知用バッファ
 let HOLIDAY_CAL = null;
+let WORK_CAL = null;
 
 function myFunction() {
   main();
@@ -67,7 +68,8 @@ function loadConfig() {
     
     SYNC_DAYS:   parseInt(props.SYNC_DAYS || '30', 10),
     WEEKEND_DAYS: (props.WEEKEND_DAYS || '0,6').split(',').map(num => parseInt(num.trim(), 10)),
-    HOLIDAY_IGNORE_LIST: (props.HOLIDAY_IGNORE_LIST || '節分,バレンタイン,雛祭り,母の日,父の日,七夕,ハロウィン,クリスマス').split(',')
+    HOLIDAY_IGNORE_LIST: (props.HOLIDAY_IGNORE_LIST || '節分,バレンタイン,雛祭り,母の日,父の日,七夕,ハロウィン,クリスマス').split(','),
+    CUSTOM_HOLIDAY_KEYWORDS: (props.CUSTOM_HOLIDAY_KEYWORDS || '創立記念日').split(',').filter(s => s.trim()).map(s => s.trim())
   };
 }
 
@@ -194,35 +196,46 @@ function createTargetEvent(cal, sEvent, title, originId, updatedStr, sourceCalId
  * 休日・週末判定
  */
 function checkHolidayOrWeekend(date) {
-  // 1. 週末チェック (CONFIGから取得済み)
-  const day = date.getDay(); 
+  // 1. 週末チェック
+  const day = date.getDay();
   if (CONFIG.WEEKEND_DAYS.includes(day)) {
     return true;
   }
-  
-  // 2. 祝日カレンダーチェック
+
+  // 2. 日本の祝日カレンダーチェック
   if (!HOLIDAY_CAL) {
-    // キャッシュしてAPIコール回数を節約
     HOLIDAY_CAL = CalendarApp.getCalendarById('ja.japanese#holiday@group.v.calendar.google.com');
   }
-  if (!HOLIDAY_CAL) return false;
+  if (HOLIDAY_CAL) {
+    const events = HOLIDAY_CAL.getEventsForDay(date);
+    const ignoreList = CONFIG.HOLIDAY_IGNORE_LIST;
+    const isPublicHoliday = events.some(e => {
+      const title = e.getTitle();
+      return !ignoreList.some(ignoreWord => title.includes(ignoreWord));
+    });
+    if (isPublicHoliday) return true;
+  }
 
-  const events = HOLIDAY_CAL.getEventsForDay(date);
-  
-  // イベントがなければ平日
-  if (events.length === 0) return false;
+  // 3. 職場カレンダーの独自休日チェック
+  if (CONFIG.WORK_CALENDAR_ID && CONFIG.CUSTOM_HOLIDAY_KEYWORDS.length > 0) {
+    if (!WORK_CAL) {
+      WORK_CAL = CalendarApp.getCalendarById(CONFIG.WORK_CALENDAR_ID);
+    }
+    
+    if (WORK_CAL) {
+      const workEvents = WORK_CAL.getEventsForDay(date);
+      const isCustomHoliday = workEvents.some(e => {
+        // 終日イベント以外は無視
+        if (!e.isAllDayEvent()) return false; 
+        
+        const title = e.getTitle();
+        return CONFIG.CUSTOM_HOLIDAY_KEYWORDS.some(keyword => title.includes(keyword));
+      });
+      if (isCustomHoliday) return true;
+    }
+  }
 
-  // --- 除外ロジック (Issue #1 対応) ---
-  // ここに日本の祝日カレンダーに含まれるが「休日ではない」イベントを定義
-  const ignoreList = CONFIG.HOLIDAY_IGNORE_LIST;
-
-  // 「除外リストに含まれるキーワード」を持たないイベントが1つでもあれば、真の休日とみなす
-  const isPublicHoliday = events.some(e => {
-    const title = e.getTitle();
-    return !ignoreList.some(ignoreWord => title.includes(ignoreWord));
-  });
-
-  return isPublicHoliday;
+  return false;
 }
 
 /**
