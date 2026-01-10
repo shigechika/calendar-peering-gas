@@ -13,6 +13,11 @@ function myFunction() {
  */
 function main() {
   loadConfig();
+
+  if (CONFIG.DRY_RUN) {
+    console.log("🚫 DRY_RUN MODE: 変更は適用されません");
+  }
+
   console.log(`設定ロード完了: 期間=${CONFIG.SYNC_DAYS}日, 週末=[${CONFIG.WEEKEND_DAYS.join(',')}]`);
 
   // 1. Work -> Home (休日は自動同期)
@@ -39,9 +44,9 @@ function main() {
     }
   );
 
-  // 3. Discord通知 (変更があった場合のみ)
+  // 3. 通知送信 (変更があった場合のみ)
   if (LOG_BUFFER.length > 0) {
-    sendDiscord();
+    sendNotifications();
   } else {
     console.log("変更なしのため通知しません");
   }
@@ -61,6 +66,7 @@ function loadConfig() {
     WORK_CALENDAR_ID: props.WORK_CALENDAR_ID,
     HOME_CALENDAR_ID: props.HOME_CALENDAR_ID,
     DISCORD_WEBHOOK_URL: props.DISCORD_WEBHOOK_URL,
+    GOOGLE_CHAT_WEBHOOK_URL: props.GOOGLE_CHAT_WEBHOOK_URL,
     
     TAG_TO_HOME: props.TAG_TO_HOME || '[Home]',
     TAG_TO_WORK: props.TAG_TO_WORK || '[Work]',
@@ -69,7 +75,8 @@ function loadConfig() {
     SYNC_DAYS:   parseInt(props.SYNC_DAYS || '30', 10),
     WEEKEND_DAYS: (props.WEEKEND_DAYS || '0,6').split(',').map(num => parseInt(num.trim(), 10)),
     HOLIDAY_IGNORE_LIST: (props.HOLIDAY_IGNORE_LIST || '節分,バレンタイン,雛祭り,母の日,父の日,七夕,ハロウィン,クリスマス').split(','),
-    CUSTOM_HOLIDAY_KEYWORDS: (props.CUSTOM_HOLIDAY_KEYWORDS || '創立記念日').split(',').filter(s => s.trim()).map(s => s.trim())
+    CUSTOM_HOLIDAY_KEYWORDS: (props.CUSTOM_HOLIDAY_KEYWORDS || '創立記念日').split(',').filter(s => s.trim()).map(s => s.trim()),
+    DRY_RUN: (props.DRY_RUN || 'false').toLowerCase() === 'true'
   };
 }
 
@@ -137,15 +144,23 @@ function syncDirection(sourceId, targetId, options) {
         const tEvent = targetMap[originId];
         const storedUpdated = tEvent.getTag('origin_updated');
         
-        if (storedUpdated !== lastUpdated) {
-          tEvent.deleteEvent(); // 更新のため削除して作り直し
-          createTargetEvent(targetCal, sEvent, targetTitle, originId, lastUpdated, sourceId);
-          recordLog(`🔄 更新: ${targetTitle} (${formatDate(sStart)})`);
-        }
+	if (storedUpdated !== lastUpdated) {
+	  if (CONFIG.DRY_RUN) {
+	    recordLog(`[DRY_RUN] 🔄 更新予定: ${targetTitle} (${formatDate(sStart)})`);
+	  } else {
+	    tEvent.deleteEvent();
+	    createTargetEvent(targetCal, sEvent, targetTitle, originId, lastUpdated, sourceId);
+	    recordLog(`🔄 更新: ${targetTitle} (${formatDate(sStart)})`);
+	  }
+	}
         delete targetMap[originId]; // 処理済みなのでマップから削除
       } else {
-        createTargetEvent(targetCal, sEvent, targetTitle, originId, lastUpdated, sourceId);
-        recordLog(`✨ 新規: ${targetTitle} (${formatDate(sStart)})`);
+	if (CONFIG.DRY_RUN) {
+	  recordLog(`[DRY_RUN] ✨ 新規作成予定: ${targetTitle} (${formatDate(sStart)})`);
+	} else {
+	  createTargetEvent(targetCal, sEvent, targetTitle, originId, lastUpdated, sourceId);
+	  recordLog(`✨ 新規: ${targetTitle} (${formatDate(sStart)})`);
+	}
       }
     }
   });
@@ -160,8 +175,12 @@ function syncDirection(sourceId, targetId, options) {
 
     const title = tEvent.getTitle();
     const start = tEvent.getStartTime();
-    tEvent.deleteEvent();
-    recordLog(`🗑️ 削除: ${title} (${formatDate(start)})`);
+    if (CONFIG.DRY_RUN) {
+      recordLog(`[DRY_RUN] 🗑️ 削除予定: ${title} (${formatDate(start)})`);
+    } else {
+      tEvent.deleteEvent();
+      recordLog(`🗑️ 削除: ${title} (${formatDate(start)})`);
+    }
   }
 }
 
@@ -247,14 +266,34 @@ function recordLog(msg) {
 }
 
 /**
+ * 統合通知ハンドラ (Discord & Google Chat)
+ */
+function sendNotifications() {
+  if (CONFIG.DRY_RUN) {
+    console.log("[DRY_RUN] 通知スキップ");
+    return;
+  }
+  
+  const message = LOG_BUFFER.join("\n");
+  
+  // Discordへ送信
+  if (CONFIG.DISCORD_WEBHOOK_URL) {
+    sendDiscord(message);
+  }
+  
+  // Google Chatへ送信
+  if (CONFIG.GOOGLE_CHAT_WEBHOOK_URL) {
+    sendGoogleChat(message);
+  }
+}
+
+/**
  * Discord通知送信
  */
-function sendDiscord() {
+function sendDiscord(message) {
   if (!CONFIG.DISCORD_WEBHOOK_URL) return;
-
-  const message = LOG_BUFFER.join("\n");
   const payload = {
-    content: `**📅 Calendar Sync Report**\n${message}`
+    content: `📅 **Calendar Sync Report**\n${message}`
   };
 
   try {
@@ -266,6 +305,27 @@ function sendDiscord() {
     console.log("Discord通知送信完了");
   } catch (e) {
     console.error("Discord送信エラー: " + e.toString());
+  }
+}
+
+/**
+ * Google Chat通知送信 (新規追加)
+ */
+function sendGoogleChat(message) {
+  if (!CONFIG.GOOGLE_CHAT_WEBHOOK_URL) return;
+  const payload = {
+    text: `📅 *Calendar Sync Report*\n${message}`
+  };
+
+  try {
+    UrlFetchApp.fetch(CONFIG.GOOGLE_CHAT_WEBHOOK_URL, {
+      method: "post",
+      contentType: "application/json",
+      payload: JSON.stringify(payload)
+    });
+    console.log("Google Chat通知送信完了");
+  } catch (e) {
+    console.error("Google Chat送信エラー: " + e.toString());
   }
 }
 
@@ -287,11 +347,13 @@ function setupProperties() {
     'WORK_CALENDAR_ID': '',
     'HOME_CALENDAR_ID': '',
     'DISCORD_WEBHOOK_URL': '',
+    'GOOGLE_CHAT_WEBHOOK_URL': '',
     'TAG_TO_HOME': '[Home]',
     'TAG_TO_WORK': '[Work]',
     'MASK_TITLE': '休暇',
     'SYNC_DAYS': '30',
-    'WEEKEND_DAYS': '0,6'
+    'WEEKEND_DAYS': '0,6',
+    'DRY_RUN': 'false'
   };
 
   for (const [key, val] of Object.entries(defaults)) {
