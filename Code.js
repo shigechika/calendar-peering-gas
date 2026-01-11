@@ -20,21 +20,21 @@ function main() {
 
   console.log(`設定ロード完了: 期間=${CONFIG.SYNC_DAYS}日, 週末=[${CONFIG.WEEKEND_DAYS.join(',')}]`);
 
-  // 1. Work -> Home (休日は自動同期)
+  // 1. Work -> Life (休日は自動同期)
   syncDirection(
     CONFIG.WORK_CALENDAR_ID, 
-    CONFIG.HOME_CALENDAR_ID, 
+    CONFIG.LIFE_CALENDAR_ID, 
     {
-      tag: CONFIG.TAG_TO_HOME,
+      tag: CONFIG.TAG_TO_LIFE,
       mask: false,
       autoSyncHolidays: true,
       autoSyncWeekdays: false
     }
   );
 
-  // 2. Home -> Work (平日は自動ブロック)
+  // 2. Life -> Work (平日は自動ブロック)
   syncDirection(
-    CONFIG.HOME_CALENDAR_ID, 
+    CONFIG.LIFE_CALENDAR_ID, 
     CONFIG.WORK_CALENDAR_ID, 
     {
       tag: CONFIG.TAG_TO_WORK,
@@ -58,24 +58,24 @@ function main() {
 function loadConfig() {
   const props = PropertiesService.getScriptProperties().getProperties();
 
-  if (!props.WORK_CALENDAR_ID || !props.HOME_CALENDAR_ID) {
-    throw new Error("【エラー】スクリプトプロパティに WORK_CALENDAR_ID と HOME_CALENDAR_ID を設定してください。");
+  if (!props.WORK_CALENDAR_ID || !props.LIFE_CALENDAR_ID) {
+    throw new Error("【エラー】スクリプトプロパティに WORK_CALENDAR_ID と LIFE_CALENDAR_ID を設定してください。");
   }
 
   CONFIG = {
     WORK_CALENDAR_ID: props.WORK_CALENDAR_ID,
-    HOME_CALENDAR_ID: props.HOME_CALENDAR_ID,
+    LIFE_CALENDAR_ID: props.LIFE_CALENDAR_ID,
     DISCORD_WEBHOOK_URL: props.DISCORD_WEBHOOK_URL,
     GOOGLE_CHAT_WEBHOOK_URL: props.GOOGLE_CHAT_WEBHOOK_URL,
     
-    TAG_TO_HOME: props.TAG_TO_HOME || '[Home]',
+    TAG_TO_LIFE: props.TAG_TO_LIFE || '[Life]',
     TAG_TO_WORK: props.TAG_TO_WORK || '[Work]',
     MASK_TITLE:  props.MASK_TITLE || '休暇',
     
     SYNC_DAYS:   parseInt(props.SYNC_DAYS || '30', 10),
     WEEKEND_DAYS: (props.WEEKEND_DAYS || '0,6').split(',').map(num => parseInt(num.trim(), 10)),
     HOLIDAY_IGNORE_LIST: (props.HOLIDAY_IGNORE_LIST || '節分,バレンタイン,雛祭り,母の日,父の日,七夕,ハロウィン,クリスマス').split(','),
-    CUSTOM_HOLIDAY_KEYWORDS: (props.CUSTOM_HOLIDAY_KEYWORDS || '創立記念日').split(',').filter(s => s.trim()).map(s => s.trim()),
+    CUSTOM_HOLIDAY_KEYWORDS: (props.CUSTOM_HOLIDAY_KEYWORDS || '').split(',').filter(s => s.trim()).map(s => s.trim()),
     DRY_RUN: (props.DRY_RUN || 'false').toLowerCase() === 'true'
   };
 }
@@ -345,15 +345,16 @@ function setupProperties() {
   
   const defaults = {
     'WORK_CALENDAR_ID': '',
-    'HOME_CALENDAR_ID': '',
+    'LIFE_CALENDAR_ID': '',
     'DISCORD_WEBHOOK_URL': '',
     'GOOGLE_CHAT_WEBHOOK_URL': '',
-    'TAG_TO_HOME': '[Home]',
+    'TAG_TO_LIFE': '[Life]',
     'TAG_TO_WORK': '[Work]',
     'MASK_TITLE': '休暇',
     'SYNC_DAYS': '30',
     'WEEKEND_DAYS': '0,6',
-    'DRY_RUN': 'false'
+    'DRY_RUN': 'false',
+    'CUSTOM_HOLIDAY_KEYWORDS' : ''
   };
 
   for (const [key, val] of Object.entries(defaults)) {
@@ -365,17 +366,17 @@ function setupProperties() {
 }
 
 /**
- * デバッグ用：WORKカレンダーとHOMEカレンダーにアクセスできるかチェック
+ * デバッグ用：WORKカレンダーとLIFEカレンダーにアクセスできるかチェック
  */
   
 function testAccess() {
   const props = PropertiesService.getScriptProperties().getProperties();
   const workId = props.WORK_CALENDAR_ID;
-  const homeId = props.HOME_CALENDAR_ID;
+  const lifeId = props.LIFE_CALENDAR_ID;
 
   const workCal = CalendarApp.getCalendarById(workId);
-  const homeCal = CalendarApp.getCalendarById(homeId);
+  const lifeCal = CalendarApp.getCalendarById(lifeId);
 
   console.log(`WORK(${workId}): ${workCal ? "OK ✅" : "NG ❌ (見つかりません)"}`);
-  console.log(`HOME(${homeId}): ${homeCal ? "OK ✅" : "NG ❌ (見つかりません)"}`);
+  console.log(`LIFE(${lifeId}): ${lifeCal ? "OK ✅" : "NG ❌ (見つかりません)"}`);
 }
