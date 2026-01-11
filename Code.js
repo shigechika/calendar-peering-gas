@@ -17,34 +17,34 @@ function main() {
   if (CONFIG.DRY_RUN) {
     console.log("🚫 DRY_RUN MODE: 変更は適用されません");
   }
-
   console.log(`設定ロード完了: 期間=${CONFIG.SYNC_DAYS}日, 週末=[${CONFIG.WEEKEND_DAYS.join(',')}]`);
 
-  // 1. Work -> Life (休日は自動同期)
+  // 1. Work -> Life
   syncDirection(
     CONFIG.WORK_CALENDAR_ID, 
     CONFIG.LIFE_CALENDAR_ID, 
     {
-      tag: CONFIG.TAG_TO_LIFE,
-      mask: false,
+      keywords: CONFIG.SYNC_KEYWORDS_TO_LIFE,
+      mask: CONFIG.MASK_WORK_TO_LIFE,
+      maskTitle: CONFIG.MASK_TITLE_WORK,
       autoSyncHolidays: true,
       autoSyncWeekdays: false
     }
   );
 
-  // 2. Life -> Work (平日は自動ブロック)
+  // 2. Life -> Work
   syncDirection(
     CONFIG.LIFE_CALENDAR_ID, 
     CONFIG.WORK_CALENDAR_ID, 
     {
-      tag: CONFIG.TAG_TO_WORK,
+      keywords: CONFIG.SYNC_KEYWORDS_TO_WORK,
       mask: true,
+      maskTitle: CONFIG.MASK_TITLE_LIFE,
       autoSyncHolidays: false,
       autoSyncWeekdays: true
     }
   );
 
-  // 3. 通知送信 (変更があった場合のみ)
   if (LOG_BUFFER.length > 0) {
     sendNotifications();
   } else {
@@ -67,10 +67,13 @@ function loadConfig() {
     LIFE_CALENDAR_ID: props.LIFE_CALENDAR_ID,
     DISCORD_WEBHOOK_URL: props.DISCORD_WEBHOOK_URL,
     GOOGLE_CHAT_WEBHOOK_URL: props.GOOGLE_CHAT_WEBHOOK_URL,
-    
-    TAG_TO_LIFE: props.TAG_TO_LIFE || '[Life]',
-    TAG_TO_WORK: props.TAG_TO_WORK || '[Work]',
-    MASK_TITLE:  props.MASK_TITLE || '休暇',
+
+		SYNC_KEYWORDS_TO_LIFE: (props.SYNC_KEYWORDS_TO_LIFE || '[Life],出張,深夜作業').split(',').map(s => s.trim()).filter(s => s),
+		SYNC_KEYWORDS_TO_WORK: (props.SYNC_KEYWORDS_TO_WORK || '[Work],通院,役所').split(',').map(s => s.trim()).filter(s => s),
+			
+    MASK_TITLE_WORK: props.MASK_TITLE_WORK || '仕事', // Work -> Life 時のタイトル
+    MASK_TITLE_LIFE: props.MASK_TITLE_LIFE || '休暇', // Life -> Work 時のタイトル (旧 MASK_TITLE)
+    MASK_WORK_TO_LIFE: (props.MASK_WORK_TO_LIFE || 'false').toLowerCase() === 'true',
     
     SYNC_DAYS:   parseInt(props.SYNC_DAYS || '30', 10),
     WEEKEND_DAYS: (props.WEEKEND_DAYS || '0,6').split(',').map(num => parseInt(num.trim(), 10)),
@@ -104,7 +107,6 @@ function syncDirection(sourceId, targetId, options) {
   targetEvents.forEach(e => {
     const originId = e.getTag('origin_id');
     const sourceCalTag = e.getTag('source_calendar_id');
-    // 【重要】自分がこの方向で作成したイベントのみを管理対象にする
     if (originId && sourceCalTag === sourceId) {
       targetMap[originId] = e;
     }
@@ -112,7 +114,6 @@ function syncDirection(sourceId, targetId, options) {
 
   // --- Upsert ---
   sourceEvents.forEach(sEvent => {
-    // 無限ループ防止: 既にボットが作ったイベントなら無視
     if (sEvent.getTag('origin_id')) return;
 
     const sTitle = sEvent.getTitle();
@@ -121,22 +122,18 @@ function syncDirection(sourceId, targetId, options) {
     
     let shouldSync = false;
 
-    // A. タグ判定
-    if (sTitle.includes(options.tag)) {
+    // Issue #8: 複数キーワードチェック（部分一致）
+    const keywordMatch = options.keywords.some(keyword => sTitle.includes(keyword));
+    if (keywordMatch) {
       shouldSync = true;
-    } 
-    // B. 自動同期判定
-    else {
-      if (options.autoSyncHolidays && isHolidayOrWeekend) {
-        shouldSync = true;
-      }
-      if (options.autoSyncWeekdays && !isHolidayOrWeekend) {
-        shouldSync = true;
-      }
+    } else {
+      if (options.autoSyncHolidays && isHolidayOrWeekend) shouldSync = true;
+      if (options.autoSyncWeekdays && !isHolidayOrWeekend) shouldSync = true;
     }
 
     if (shouldSync) {
-      const targetTitle = options.mask ? CONFIG.MASK_TITLE : sTitle;
+      // Issue #9: maskオプションに応じてタイトル決定
+      const targetTitle = options.mask ? options.maskTitle : sTitle;
       const originId = sEvent.getId();
       const lastUpdated = sEvent.getLastUpdated().toISOString();
 
@@ -144,23 +141,23 @@ function syncDirection(sourceId, targetId, options) {
         const tEvent = targetMap[originId];
         const storedUpdated = tEvent.getTag('origin_updated');
         
-	if (storedUpdated !== lastUpdated) {
-	  if (CONFIG.DRY_RUN) {
-	    recordLog(`[DRY_RUN] 🔄 更新予定: ${targetTitle} (${formatDate(sStart)})`);
-	  } else {
-	    tEvent.deleteEvent();
-	    createTargetEvent(targetCal, sEvent, targetTitle, originId, lastUpdated, sourceId);
-	    recordLog(`🔄 更新: ${targetTitle} (${formatDate(sStart)})`);
-	  }
-	}
-        delete targetMap[originId]; // 処理済みなのでマップから削除
+        if (storedUpdated !== lastUpdated) {
+          if (CONFIG.DRY_RUN) {
+            recordLog(`[DRY_RUN] 🔄 更新予定: ${targetTitle} (${formatDate(sStart)})`);
+          } else {
+            tEvent.deleteEvent();
+            createTargetEvent(targetCal, sEvent, targetTitle, originId, lastUpdated, sourceId);
+            recordLog(`🔄 更新: ${targetTitle} (${formatDate(sStart)})`);
+          }
+        }
+        delete targetMap[originId];
       } else {
-	if (CONFIG.DRY_RUN) {
-	  recordLog(`[DRY_RUN] ✨ 新規作成予定: ${targetTitle} (${formatDate(sStart)})`);
-	} else {
-	  createTargetEvent(targetCal, sEvent, targetTitle, originId, lastUpdated, sourceId);
-	  recordLog(`✨ 新規: ${targetTitle} (${formatDate(sStart)})`);
-	}
+        if (CONFIG.DRY_RUN) {
+          recordLog(`[DRY_RUN] ✨ 新規作成予定: ${targetTitle} (${formatDate(sStart)})`);
+        } else {
+          createTargetEvent(targetCal, sEvent, targetTitle, originId, lastUpdated, sourceId);
+          recordLog(`✨ 新規: ${targetTitle} (${formatDate(sStart)})`);
+        }
       }
     }
   });
@@ -170,7 +167,6 @@ function syncDirection(sourceId, targetId, options) {
     const tEvent = targetMap[key];
     const sourceCalTag = tEvent.getTag('source_calendar_id');
   
-    // 念のためタグチェック (マップ生成時にもやっているが二重チェック)
     if (sourceCalTag !== sourceId) continue;
 
     const title = tEvent.getTitle();
@@ -348,13 +344,16 @@ function setupProperties() {
     'LIFE_CALENDAR_ID': '',
     'DISCORD_WEBHOOK_URL': '',
     'GOOGLE_CHAT_WEBHOOK_URL': '',
-    'TAG_TO_LIFE': '[Life]',
-    'TAG_TO_WORK': '[Work]',
-    'MASK_TITLE': '休暇',
+    'SYNC_KEYWORDS_TO_LIFE': '[Life],出張,深夜作業',
+		'SYNC_KEYWORDS_TO_WORK': '[Work],通院,役所',
+    'MASK_TITLE_LIFE': '休暇',
+    'MASK_TITLE_WORK': '仕事',
+    'MASK_WORK_TO_LIFE': 'false',
     'SYNC_DAYS': '30',
     'WEEKEND_DAYS': '0,6',
-    'DRY_RUN': 'false',
-    'CUSTOM_HOLIDAY_KEYWORDS' : ''
+    'HOLIDAY_IGNORE_LIST': '節分,バレンタイン,雛祭り,母の日,父の日,七夕,ハロウィン,クリスマス',
+    'CUSTOM_HOLIDAY_KEYWORDS': '',
+    'DRY_RUN': 'false'
   };
 
   for (const [key, val] of Object.entries(defaults)) {
