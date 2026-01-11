@@ -72,7 +72,7 @@ GASエディタの「プロジェクトの設定」>「スクリプト プロパ
 |--------|------|
 | **SYNC_KEYWORDS_TO_LIFE** | 指定したキーワード（例: `夜勤`）を含む予定は、自動でLifeカレンダーへ共有します。 |
 | **SYNC_KEYWORDS_TO_WORK** | 指定したキーワード（例: `通院`）を含む予定は、Workカレンダーへマスクして共有します。 |
-| **MASK_WORK_TO_LIFE** | `true` にすると、Work→Lifeの同期時にタイトルが `MASK_TITLE_WORK`（例: `仕事`）に置き換わります。<br>※ NDA案件や🕵️‍♂️🥜な任務など(#9)、家族にも秘密にしたい予定に最適です。 |
+| **MASK_WORK_TO_LIFE** | `true` にすると、Work→Lifeの同期時にタイトルが `MASK_TITLE_WORK`（例: `仕事`）に置き換わります。<br>※ NDA案件や🕵️‍♂️🥜な任務など（[#9](https://github.com/shigechika/calendar-peering-gas/issues/9)）、家族にも秘密にしたい予定に最適です。 |
 
 ### 4. トリガー設定
 GASのトリガー設定画面で、`main` 関数を「時間主導型（例: 1時間おき）」で設定してください。
