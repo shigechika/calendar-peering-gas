@@ -3,6 +3,7 @@ let CONFIG = {};
 let LOG_BUFFER = []; // Discord通知用バッファ
 let HOLIDAY_CAL = null;
 let WORK_CAL = null;
+let HOLIDAY_CACHE = {}; // 日付ごとの休日判定キャッシュ
 
 function myFunction() {
   main();
@@ -68,16 +69,16 @@ function loadConfig() {
     DISCORD_WEBHOOK_URL: props.DISCORD_WEBHOOK_URL,
     GOOGLE_CHAT_WEBHOOK_URL: props.GOOGLE_CHAT_WEBHOOK_URL,
 
-		SYNC_KEYWORDS_TO_LIFE: (props.SYNC_KEYWORDS_TO_LIFE || '[Life],出張,深夜作業').split(',').map(s => s.trim()).filter(s => s),
-		SYNC_KEYWORDS_TO_WORK: (props.SYNC_KEYWORDS_TO_WORK || '[Work],通院,役所').split(',').map(s => s.trim()).filter(s => s),
-			
+    SYNC_KEYWORDS_TO_LIFE: (props.SYNC_KEYWORDS_TO_LIFE || '[Life],出張,深夜作業').split(',').map(s => s.trim()).filter(s => s),
+    SYNC_KEYWORDS_TO_WORK: (props.SYNC_KEYWORDS_TO_WORK || '[Work],通院,役所').split(',').map(s => s.trim()).filter(s => s),
+
     MASK_TITLE_WORK: props.MASK_TITLE_WORK || '仕事', // Work -> Life 時のタイトル
     MASK_TITLE_LIFE: props.MASK_TITLE_LIFE || '休暇', // Life -> Work 時のタイトル (旧 MASK_TITLE)
     MASK_WORK_TO_LIFE: (props.MASK_WORK_TO_LIFE || 'false').toLowerCase() === 'true',
     
     SYNC_DAYS:   parseInt(props.SYNC_DAYS || '30', 10),
     WEEKEND_DAYS: (props.WEEKEND_DAYS || '0,6').split(',').map(num => parseInt(num.trim(), 10)),
-    HOLIDAY_IGNORE_LIST: (props.HOLIDAY_IGNORE_LIST || '節分,バレンタイン,雛祭り,母の日,父の日,七夕,ハロウィン,クリスマス').split(','),
+    HOLIDAY_IGNORE_LIST: (props.HOLIDAY_IGNORE_LIST || '節分,バレンタイン,雛祭り,母の日,父の日,七夕,ハロウィン,クリスマス').split(',').map(s => s.trim()),
     CUSTOM_HOLIDAY_KEYWORDS: (props.CUSTOM_HOLIDAY_KEYWORDS || '').split(',').filter(s => s.trim()).map(s => s.trim()),
     DRY_RUN: (props.DRY_RUN || 'false').toLowerCase() === 'true'
   };
@@ -102,13 +103,21 @@ function syncDirection(sourceId, targetId, options) {
   const sourceEvents = sourceCal.getEvents(now, endDate);
   const targetEvents = targetCal.getEvents(now, endDate);
 
-  // マップ作成
+  // マップ作成（重複origin_idがあれば後続を削除して1つに統合）
   const targetMap = {};
   targetEvents.forEach(e => {
     const originId = e.getTag('origin_id');
     const sourceCalTag = e.getTag('source_calendar_id');
     if (originId && sourceCalTag === sourceId) {
-      targetMap[originId] = e;
+      if (targetMap[originId]) {
+        // 重複イベントを削除して孤立を防止
+        if (!CONFIG.DRY_RUN) {
+          e.deleteEvent();
+        }
+        recordLog(`🧹 重複削除: ${e.getTitle()} (${formatDate(e.getStartTime())})`);
+      } else {
+        targetMap[originId] = e;
+      }
     }
   });
 
@@ -162,13 +171,9 @@ function syncDirection(sourceId, targetId, options) {
     }
   });
 
-  // --- Delete ---
+  // --- Delete（targetMapはsourceIdでフィルタ済み） ---
   for (const key in targetMap) {
     const tEvent = targetMap[key];
-    const sourceCalTag = tEvent.getTag('source_calendar_id');
-  
-    if (sourceCalTag !== sourceId) continue;
-
     const title = tEvent.getTitle();
     const start = tEvent.getStartTime();
     if (CONFIG.DRY_RUN) {
@@ -211,46 +216,55 @@ function createTargetEvent(cal, sEvent, title, originId, updatedStr, sourceCalId
  * 休日・週末判定
  */
 function checkHolidayOrWeekend(date) {
+  // 同日の複数イベントに対するAPI呼び出しを削減するためキャッシュ
+  const cacheKey = Utilities.formatDate(date, 'Asia/Tokyo', 'yyyy-MM-dd');
+  if (cacheKey in HOLIDAY_CACHE) return HOLIDAY_CACHE[cacheKey];
+
+  let result = false;
+
   // 1. 週末チェック
   const day = date.getDay();
   if (CONFIG.WEEKEND_DAYS.includes(day)) {
-    return true;
+    result = true;
   }
 
   // 2. 日本の祝日カレンダーチェック
-  if (!HOLIDAY_CAL) {
-    HOLIDAY_CAL = CalendarApp.getCalendarById('ja.japanese#holiday@group.v.calendar.google.com');
-  }
-  if (HOLIDAY_CAL) {
-    const events = HOLIDAY_CAL.getEventsForDay(date);
-    const ignoreList = CONFIG.HOLIDAY_IGNORE_LIST;
-    const isPublicHoliday = events.some(e => {
-      const title = e.getTitle();
-      return !ignoreList.some(ignoreWord => title.includes(ignoreWord));
-    });
-    if (isPublicHoliday) return true;
+  if (!result) {
+    if (!HOLIDAY_CAL) {
+      HOLIDAY_CAL = CalendarApp.getCalendarById('ja.japanese#holiday@group.v.calendar.google.com');
+    }
+    if (HOLIDAY_CAL) {
+      const events = HOLIDAY_CAL.getEventsForDay(date);
+      const ignoreList = CONFIG.HOLIDAY_IGNORE_LIST;
+      const isPublicHoliday = events.some(e => {
+        const title = e.getTitle();
+        return !ignoreList.some(ignoreWord => title.includes(ignoreWord));
+      });
+      if (isPublicHoliday) result = true;
+    }
   }
 
   // 3. 職場カレンダーの独自休日チェック
-  if (CONFIG.WORK_CALENDAR_ID && CONFIG.CUSTOM_HOLIDAY_KEYWORDS.length > 0) {
+  if (!result && CONFIG.WORK_CALENDAR_ID && CONFIG.CUSTOM_HOLIDAY_KEYWORDS.length > 0) {
     if (!WORK_CAL) {
       WORK_CAL = CalendarApp.getCalendarById(CONFIG.WORK_CALENDAR_ID);
     }
-    
+
     if (WORK_CAL) {
       const workEvents = WORK_CAL.getEventsForDay(date);
       const isCustomHoliday = workEvents.some(e => {
         // 終日イベント以外は無視
-        if (!e.isAllDayEvent()) return false; 
-        
+        if (!e.isAllDayEvent()) return false;
+
         const title = e.getTitle();
         return CONFIG.CUSTOM_HOLIDAY_KEYWORDS.some(keyword => title.includes(keyword));
       });
-      if (isCustomHoliday) return true;
+      if (isCustomHoliday) result = true;
     }
   }
 
-  return false;
+  HOLIDAY_CACHE[cacheKey] = result;
+  return result;
 }
 
 /**
@@ -288,20 +302,36 @@ function sendNotifications() {
  */
 function sendDiscord(message) {
   if (!CONFIG.DISCORD_WEBHOOK_URL) return;
-  const payload = {
-    content: `📅 **Calendar Sync Report**\n${message}`
-  };
+  const header = '📅 **Calendar Sync Report**\n';
+  const maxLen = 2000 - header.length;
 
-  try {
-    UrlFetchApp.fetch(CONFIG.DISCORD_WEBHOOK_URL, {
-      method: "post",
-      contentType: "application/json",
-      payload: JSON.stringify(payload)
-    });
-    console.log("Discord通知送信完了");
-  } catch (e) {
-    console.error("Discord送信エラー: " + e.toString());
+  // Discord content上限(2000文字)を超える場合は分割送信
+  const chunks = [];
+  let current = '';
+  for (const line of message.split('\n')) {
+    if (current && (current + line + '\n').length > maxLen) {
+      chunks.push(current);
+      current = '';
+    }
+    current += line + '\n';
   }
+  if (current) chunks.push(current);
+
+  for (const chunk of chunks) {
+    const payload = {
+      content: header + chunk.trimEnd()
+    };
+    try {
+      UrlFetchApp.fetch(CONFIG.DISCORD_WEBHOOK_URL, {
+        method: "post",
+        contentType: "application/json",
+        payload: JSON.stringify(payload)
+      });
+    } catch (e) {
+      console.error("Discord送信エラー: " + e.toString());
+    }
+  }
+  console.log(`Discord通知送信完了 (${chunks.length}件)`);
 }
 
 /**
@@ -345,7 +375,7 @@ function setupProperties() {
     'DISCORD_WEBHOOK_URL': '',
     'GOOGLE_CHAT_WEBHOOK_URL': '',
     'SYNC_KEYWORDS_TO_LIFE': '[Life],出張,深夜作業',
-		'SYNC_KEYWORDS_TO_WORK': '[Work],通院,役所',
+    'SYNC_KEYWORDS_TO_WORK': '[Work],通院,役所',
     'MASK_TITLE_LIFE': '休暇',
     'MASK_TITLE_WORK': '仕事',
     'MASK_WORK_TO_LIFE': 'false',
@@ -367,7 +397,6 @@ function setupProperties() {
 /**
  * デバッグ用：WORKカレンダーとLIFEカレンダーにアクセスできるかチェック
  */
-  
 function testAccess() {
   const props = PropertiesService.getScriptProperties().getProperties();
   const workId = props.WORK_CALENDAR_ID;
