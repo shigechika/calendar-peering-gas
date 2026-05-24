@@ -12,7 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `WORK_START_HOUR` / `WORK_END_HOUR` スクリプトプロパティ（デフォルト: 10〜18時）
 - `loadConfig()` での `WORK_START_HOUR` / `WORK_END_HOUR` 入力値検証
 
-### Docs
+### Changed
 - CLAUDE.md を追加（AIアシスタント向けコードベースガイド） (#12, #13)
 
 ## [0.999] - 2026-01-11
