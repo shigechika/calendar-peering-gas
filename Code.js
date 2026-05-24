@@ -29,7 +29,8 @@ function main() {
       mask: CONFIG.MASK_WORK_TO_LIFE,
       maskTitle: CONFIG.MASK_TITLE_WORK,
       autoSyncHolidays: true,
-      autoSyncWeekdays: false
+      autoSyncWeekdays: false,
+      autoSyncOffHours: true
     }
   );
 
@@ -76,7 +77,9 @@ function loadConfig() {
     MASK_TITLE_LIFE: props.MASK_TITLE_LIFE || '休暇', // Life -> Work 時のタイトル (旧 MASK_TITLE)
     MASK_WORK_TO_LIFE: (props.MASK_WORK_TO_LIFE || 'false').toLowerCase() === 'true',
     
-    SYNC_DAYS:   parseInt(props.SYNC_DAYS || '30', 10),
+    SYNC_DAYS:        parseInt(props.SYNC_DAYS || '30', 10),
+    WORK_START_HOUR:  parseInt(props.WORK_START_HOUR || '10', 10),
+    WORK_END_HOUR:    parseInt(props.WORK_END_HOUR   || '18', 10),
     WEEKEND_DAYS: (props.WEEKEND_DAYS || '0,6').split(',').map(num => parseInt(num.trim(), 10)),
     HOLIDAY_IGNORE_LIST: (props.HOLIDAY_IGNORE_LIST || '節分,バレンタイン,雛祭り,母の日,父の日,七夕,ハロウィン,クリスマス').split(',').map(s => s.trim()),
     CUSTOM_HOLIDAY_KEYWORDS: (props.CUSTOM_HOLIDAY_KEYWORDS || '').split(',').filter(s => s.trim()).map(s => s.trim()),
@@ -138,6 +141,11 @@ function syncDirection(sourceId, targetId, options) {
     } else {
       if (options.autoSyncHolidays && isHolidayOrWeekend) shouldSync = true;
       if (options.autoSyncWeekdays && !isHolidayOrWeekend) shouldSync = true;
+      // 平日の勤務時間外（始業前・終業後）は同期対象とする
+      if (options.autoSyncOffHours && !isHolidayOrWeekend && !sEvent.isAllDayEvent()) {
+        const hour = parseInt(Utilities.formatDate(sStart, 'Asia/Tokyo', 'H'), 10);
+        if (hour < CONFIG.WORK_START_HOUR || hour >= CONFIG.WORK_END_HOUR) shouldSync = true;
+      }
     }
 
     if (shouldSync) {
@@ -380,6 +388,8 @@ function setupProperties() {
     'MASK_TITLE_WORK': '仕事',
     'MASK_WORK_TO_LIFE': 'false',
     'SYNC_DAYS': '30',
+    'WORK_START_HOUR': '10',
+    'WORK_END_HOUR': '18',
     'WEEKEND_DAYS': '0,6',
     'HOLIDAY_IGNORE_LIST': '節分,バレンタイン,雛祭り,母の日,父の日,七夕,ハロウィン,クリスマス',
     'CUSTOM_HOLIDAY_KEYWORDS': '',
