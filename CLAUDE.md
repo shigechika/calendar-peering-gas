@@ -105,6 +105,8 @@ main()
 | `MASK_TITLE_LIFE` | `休暇` | Life→Workマスク時タイトル |
 | `MASK_WORK_TO_LIFE` | `false` | Work→Lifeでタイトルをマスクするか |
 | `SYNC_DAYS` | `30` | 同期対象期間（日数） |
+| `WORK_START_HOUR` | `10` | 勤務開始時刻（時）。この時刻より前は勤務時間外としてWork→Lifeに同期 |
+| `WORK_END_HOUR` | `18` | 勤務終了時刻（時）。この時刻以降は勤務時間外としてWork→Lifeに同期 |
 | `WEEKEND_DAYS` | `0,6` | 週末曜日（0=日, 6=土） |
 | `HOLIDAY_IGNORE_LIST` | `節分,バレンタイン,...` | 祝日判定除外リスト |
 | `CUSTOM_HOLIDAY_KEYWORDS` | (空) | 職場独自休日キーワード |

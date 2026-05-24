@@ -85,6 +85,17 @@ function loadConfig() {
     CUSTOM_HOLIDAY_KEYWORDS: (props.CUSTOM_HOLIDAY_KEYWORDS || '').split(',').filter(s => s.trim()).map(s => s.trim()),
     DRY_RUN: (props.DRY_RUN || 'false').toLowerCase() === 'true'
   };
+
+  if (
+    CONFIG.WORK_START_HOUR < 0 || CONFIG.WORK_START_HOUR > 23 ||
+    CONFIG.WORK_END_HOUR   < 1 || CONFIG.WORK_END_HOUR   > 23 ||
+    CONFIG.WORK_START_HOUR >= CONFIG.WORK_END_HOUR
+  ) {
+    throw new Error(
+      `【エラー】WORK_START_HOUR(${CONFIG.WORK_START_HOUR}) / WORK_END_HOUR(${CONFIG.WORK_END_HOUR}) の設定が不正です。` +
+      `0 ≤ WORK_START_HOUR < WORK_END_HOUR ≤ 23 を満たす整数を設定してください。`
+    );
+  }
 }
 
 /**
